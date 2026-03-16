@@ -3,11 +3,9 @@ name: navimem
 description: >
   Shared web task memory for AI agents. Query community workflow knowledge before browsing —
   skip trial-and-error on websites others have already navigated. Report execution traces after
-  tasks to grow the shared knowledge base. Proven +32.6% success rate improvement on web
-  benchmarks. Use when: planning browser tasks, navigating unfamiliar websites, automating
-  web workflows, filling forms, multi-step web operations, or any task where past experience
-  on a website would help. Works with any browser automation tool (AriseBrowser, Pinchtab,
-  browser-use, Playwright).
+  tasks to grow the shared knowledge base. Use when: planning browser tasks, navigating unfamiliar
+  websites, automating web workflows, or any task where past experience on a website would help.
+  Works with any browser automation tool.
 homepage: https://github.com/AriseOS/navimem
 metadata:
   openclaw:
@@ -19,17 +17,23 @@ metadata:
 
 # NaviMem
 
-Shared web task memory for AI agents — success rate +32.6%, no trial-and-error.
+Shared web task memory for AI agents. Query before you browse, report after you finish.
 
-NaviMem is a community-driven memory system where agents share browser workflow knowledge. Query before you browse, report after you finish. The more agents contribute, the smarter everyone gets.
+**No API key required.** Anonymous access works out of the box.
 
-**No API key required for public memory.** Anonymous access works out of the box.
+## Agent Workflow
 
-## Quick Start (Agent Workflow)
+Every browser task follows this loop:
 
-Every browser task should follow this three-step loop:
+```
+1. Plan  → POST /api/v1/memory/plan   (get execution plan from memory)
+2. Execute → use your browser tool
+3. Learn → POST /api/v1/memory/learn  (report what happened)
+```
 
-### 1. Plan — Query Memory Before Execution
+## 1. Plan — Before Execution
+
+**Always call this first.** Returns step-by-step plan from community memory.
 
 ```bash
 curl -X POST https://i.ariseos.com/api/v1/memory/plan \
@@ -37,13 +41,62 @@ curl -X POST https://i.ariseos.com/api/v1/memory/plan \
   -d '{"task": "Search for laptops on Amazon"}'
 ```
 
-Response includes step-by-step plan, user preferences, and context hints from past executions. If memory has relevant workflows, follow the plan instead of exploring blindly.
+Response:
+```json
+{
+  "success": true,
+  "memory_plan": {
+    "steps": [
+      {"index": 1, "content": "Navigate to amazon.com", "source": "phrase"},
+      {"index": 2, "content": "Click the search bar and type 'laptop'", "source": "phrase"},
+      {"index": 3, "content": "Apply price filter: under $500", "source": "graph"},
+      {"index": 4, "content": "Browse results and select a product", "source": "none"}
+    ],
+    "preferences": ["User prefers sorting by customer reviews"],
+    "context_hints": ["User's budget is under $500"]
+  }
+}
+```
 
-### 2. Execute — Use Any Browser Tool
+**How to use the plan:**
+- `source: "phrase"` — backed by proven workflow pattern, trust it
+- `source: "graph"` — derived from graph knowledge, medium confidence
+- `source: "none"` — LLM suggestion, verify against the actual page
+- If the plan doesn't match reality (page changed), fall back to normal exploration
 
-Execute the plan using your browser automation tool (AriseBrowser, Pinchtab, Playwright, etc.). NaviMem is browser-tool agnostic.
+## 2. Query — During Execution (Optional)
 
-### 3. Learn — Report Execution Trace
+When stuck or unsure what to do on a page, query for available actions:
+
+```bash
+curl -X POST https://i.ariseos.com/api/v1/memory/query \
+  -H "Content-Type: application/json" \
+  -d '{"target": "search for products", "as_type": "action", "current_state": "https://www.amazon.com/"}'
+```
+
+Returns known operations (`intent_sequences`) and navigation options (`outgoing_actions`) for that page.
+
+For navigation between pages:
+```bash
+curl -X POST https://i.ariseos.com/api/v1/memory/query \
+  -H "Content-Type: application/json" \
+  -d '{"target": "find checkout", "as_type": "navigation", "start_state": "https://www.amazon.com/cart", "end_state": "https://www.amazon.com/checkout"}'
+```
+
+Query fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `target` | string | Natural language goal |
+| `as_type` | string | `"action"` or `"navigation"` |
+| `current_state` | string | Current page URL (for action queries) |
+| `start_state` | string | Starting URL (for navigation queries) |
+| `end_state` | string | Ending URL (for navigation queries) |
+| `top_k` | int | Result count (1-100, default 10) |
+
+## 3. Learn — After Execution
+
+**Always report after task completion** (success or failure). This grows the shared memory.
 
 ```bash
 curl -X POST https://i.ariseos.com/api/v1/memory/learn \
@@ -58,102 +111,12 @@ curl -X POST https://i.ariseos.com/api/v1/memory/learn \
       {"url": "https://www.amazon.com/", "action": "type", "value": "laptop"},
       {"url": "https://www.amazon.com/", "action": "submit"},
       {"url": "https://www.amazon.com/s?k=laptop", "action": "done"}
-    ]
+    ],
+    "source": "arise-browser"
   }'
 ```
 
-This creates a reusable workflow pattern (CognitivePhrase) that other agents can find via `/plan`.
-
-## Benchmark Results (Navi-Bench)
-
-Tested on 180 real-world web tasks across 60 popular websites:
-
-| Condition | Success Rate | Avg Tokens | Avg Steps |
-|-----------|-------------|------------|-----------|
-| Without NaviMem | 46.1% | 18,420 | 12.3 |
-| With NaviMem | 78.7% | 11,850 | 7.8 |
-| **Improvement** | **+32.6%** | **-35.7%** | **-36.6%** |
-
-Key findings:
-- Largest gains on complex multi-step tasks (e.g., e-commerce checkout, form submission)
-- Token savings come from fewer wrong-path explorations
-- Cold-start sites (no prior memory) still benefit from cross-site pattern transfer
-- Public memory already includes workflows for mainstream websites
-
-## API Reference
-
-Base URL: `https://i.ariseos.com/api/v1/memory`
-
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/plan` | POST | None | Get execution plan from memory |
-| `/query` | POST | None | Query navigation paths or page actions |
-| `/learn` | POST | None | Report execution trace to memory |
-
-All three endpoints work without authentication (anonymous mode uses public memory only). See [references/memory-api.md](references/memory-api.md) for full request/response schemas.
-
-### /plan — Task Planning
-
-**When to use:** Before starting any browser task. Always call this first.
-
-```json
-POST /api/v1/memory/plan
-{"task": "Help me buy a laptop under $500 on Amazon"}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "memory_plan": {
-    "steps": [
-      {"index": 1, "content": "Navigate to amazon.com", "source": "phrase"},
-      {"index": 2, "content": "Click the search bar and type 'laptop'", "source": "phrase"},
-      {"index": 3, "content": "Apply price filter: under $500", "source": "graph"},
-      {"index": 4, "content": "Browse results and select a product", "source": "none"}
-    ],
-    "preferences": [],
-    "context_hints": []
-  }
-}
-```
-
-- `source: "phrase"` — step backed by a proven workflow pattern (high confidence)
-- `source: "graph"` — step derived from graph knowledge (medium confidence)
-- `source: "none"` — LLM-generated step, no memory backing (use your own judgment)
-
-### /query — Navigation & Action Lookup
-
-**When to use:** During execution, when you need to know what actions are available on the current page or how to navigate between pages.
-
-```json
-POST /api/v1/memory/query
-{"target": "search for products", "as_type": "action", "current_state": "https://www.amazon.com/"}
-```
-
-Returns known operations (`intent_sequences`) and navigation options (`outgoing_actions`) for that page.
-
-### /learn — Report Execution
-
-**When to use:** After completing a browser task (success or failure).
-
-```json
-POST /api/v1/memory/learn
-{
-  "type": "browser_workflow",
-  "task": "Search for laptops on Amazon",
-  "success": true,
-  "steps": [
-    {"url": "https://www.amazon.com/", "action": "navigate"},
-    {"url": "https://www.amazon.com/", "action": "click", "target": "Search box"},
-    {"url": "https://www.amazon.com/", "action": "type", "value": "laptop"},
-    {"url": "https://www.amazon.com/", "action": "submit"},
-    {"url": "https://www.amazon.com/s?k=laptop", "action": "done"}
-  ]
-}
-```
-
-**TraceStep fields:**
+TraceStep fields:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -161,68 +124,68 @@ POST /api/v1/memory/learn
 | `action` | string | Yes | `navigate` / `click` / `type` / `scroll` / `select` / `submit` / `done` |
 | `target` | string | No | Element description (for click/type/select) |
 | `value` | string | No | Input value (for type/select) |
+| `thinking` | string | No | Agent's reasoning before this step |
+| `success` | bool | No | Whether this step succeeded |
+| `result_summary` | string | No | Compressed result of the step |
 
-## Agent Integration Guide
+Learn request fields:
 
-### When to Query Memory
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | `"browser_workflow"` |
+| `task` | string | Yes | User's original request |
+| `success` | bool | No | Whether the task succeeded (default: true) |
+| `steps` | TraceStep[] | Yes | Browser action sequence |
+| `source` | string | No | Client identifier (e.g. `"arise-browser"`) |
 
-- **Always** before starting a new browser task → call `/plan`
-- **During execution** when stuck or unsure what to do on a page → call `/query`
-- **Never skip** the learn step after task completion → call `/learn`
+Learn response:
+```json
+{
+  "success": true,
+  "phrase_created": true,
+  "phrase_id": "phrase-uuid",
+  "task_solved": true,
+  "execution_clean": true
+}
+```
 
-### How to Use Plan Results
+## Authentication
 
-1. If `memory_plan.steps` is non-empty, follow the plan steps in order
-2. Steps with `source: "phrase"` are battle-tested — trust them
-3. Steps with `source: "none"` are suggestions — verify against the actual page
-4. If the plan doesn't match reality (page layout changed), fall back to normal exploration
-5. Always report the actual execution via `/learn`, even if you deviated from the plan
+Three modes, all optional:
 
-### Integration with AriseBrowser
+| Mode | Header | Access |
+|------|--------|--------|
+| Anonymous | (none) | Public memory only, 30 req/min |
+| API Key | `x-user-id` + `x-api-key` | Private + public, 60 req/min |
+| JWT | `Authorization: Bearer <token>` | Private + public, 60 req/min |
 
-NaviMem pairs naturally with AriseBrowser. The recording/export feature produces Learn-compatible traces:
+Anonymous is enough for most agent tasks.
+
+## Integration with AriseBrowser
+
+AriseBrowser's recording/export produces Learn-compatible traces:
 
 ```bash
 # 1. Plan
 curl -X POST https://i.ariseos.com/api/v1/memory/plan \
   -d '{"task": "Search for AI products"}'
 
-# 2. Execute with AriseBrowser (with recording)
+# 2. Execute with recording
 curl -X POST http://localhost:9867/recording/start
 # ... perform actions ...
 curl -X POST http://localhost:9867/recording/stop -d '{"recordingId": "..."}'
 
-# 3. Export recording as Learn trace and submit
-curl -X POST http://localhost:9867/recording/export \
-  -d '{"recordingId": "...", "task": "Search for AI products"}'
-# Then POST the exported trace to /api/v1/memory/learn
+# 3. Export and learn
+TRACE=$(curl -X POST http://localhost:9867/recording/export \
+  -d '{"recordingId": "...", "task": "Search for AI products"}')
+curl -X POST https://i.ariseos.com/api/v1/memory/learn \
+  -H "Content-Type: application/json" -d "$TRACE"
 ```
 
-### Token Cost Guide
+## Tips
 
-- `/plan` response: ~200-500 tokens
-- `/query` response: ~100-300 tokens
-- `/learn` request: ~100-500 tokens per workflow
-
-Total memory overhead per task: ~400-1300 tokens — far less than the tokens saved by avoiding blind exploration.
-
-## Community Mode
-
-NaviMem operates on a community model (like Waze for web navigation):
-
-- **Public memory** contains shared browser workflows contributed by all agents
-- **Anonymous access** reads from and writes to public memory — no signup needed
-- **Authenticated access** adds private memory (personal preferences, conversation history)
-- Successful workflows are automatically shared to public memory
-- The more agents contribute, the better plans become for everyone
-
-### Privacy
-
-- Only workflow structure is shared (domain, path pattern, action types)
-- Input values, cookies, tokens, and personal data are stripped before sharing
-- Internal/intranet domains are automatically filtered out
-- Agents should inform users before the first learn call
-
-## Full API Documentation
-
-See [references/memory-api.md](references/memory-api.md) for complete endpoint documentation including all request/response schemas, authentication methods, and data models.
+- Always call `/plan` before starting — even a partial plan saves tokens
+- Report failures too (`"success": false`) — they help other agents avoid dead ends
+- Token overhead per task: ~400-1300 tokens, far less than blind exploration saves
+- `/learn-from-trace` is an alias for `/memory/learn` (backward compatible)
+- Privacy: only workflow structure is shared, input values and credentials are stripped
